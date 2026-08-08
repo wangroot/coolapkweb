@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- 核心：关闭 Referer 发送，绕过酷安 CDN 的图片防盗链拦截 -->
+    <meta name="referrer" content="no-referrer">
+    <title>酷安 Lite (Real API)</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        coolapk: {
+                            DEFAULT: '#11B063',
+                            light: '#E7F7ED',
+                            dark: '#0E9352'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        * { -webkit-tap-highlight-color: transparent; }
+        
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            background-color: #f3f4f6;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.05);
+        }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* 新增：详情页右侧滑入动画 */
+        .slide-in-right { animation: slideInRight 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
+        @keyframes slideInRight {
+            from { opacity: 0; transform: translateX(100%); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        
+        /* 新增：下拉刷新容器过渡 */
+        #ptr-indicator { transition: height 0.2s ease; overflow: hidden; }
+        
+        /* 处理酷安原生的富文本内容 */
+        .feed-content a { color: #11B063; text-decoration: none; }
+        .feed-content img { max-width: 100%; border-radius: 8px; margin-top: 8px; }
+    </style>
+</head>
+<body class="bg-gray-200 text-gray-800">
+
+<div class="app-container">
+    
+    <!-- Header -->
+    <header class="bg-white px-4 py-3 flex items-center justify-between sticky top-0 z-50 border-b border-gray-100">
+        <div class="flex items-center space-x-2">
+            <div class="w-8 h-8 bg-coolapk rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-sm">
+                C
+            </div>
+            <span class="font-bold text-lg tracking-wide">酷安 Lite</span>
+        </div>
+        <div class="flex-1 ml-4 bg-gray-100 rounded-full flex items-center px-3 py-1.5 text-gray-500">
+            <i class="fas fa-search text-sm"></i>
+            <input id="global-search-input" type="text" placeholder="搜索应用、数码、动态" class="bg-transparent border-none outline-none w-full ml-2 text-sm text-gray-700 placeholder-gray-400">
+            <button id="search-clear-btn" class="hidden text-gray-400 hover:text-gray-600 px-1"><i class="fas fa-times-circle"></i></button>
+        </div>
+    </header>
+
+    <!-- Top Tabs (Feed Categories) - 动态从 /v6/main/init 拉取 -->
+    <div id="top-tabs" class="bg-white px-4 py-2 flex space-x-6 overflow-x-auto no-scrollbar border-b border-gray-100 text-sm font-medium sticky top-[57px] z-40">
+        <!-- 由 JS 动态渲染 -->
+    </div>
+
+    <!-- Main Scrollable Area -->
+    <main class="flex-1 overflow-y-auto no-scrollbar relative" id="main-content">
+        
+        <!-- 新增：下拉刷新指示器 -->
+        <div id="ptr-indicator" class="flex justify-center items-center w-full bg-gray-100 h-0">
+            <div class="flex items-center space-x-2 text-gray-500 text-sm">
+                <i id="ptr-icon" class="fas fa-arrow-down transition-transform duration-300"></i>
+                <span id="ptr-text">下拉刷新</span>
+            </div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div id="loader" class="flex flex-col justify-center items-center py-12 hidden">
+            <i class="fas fa-circle-notch fa-spin text-coolapk text-3xl mb-3"></i>
+            <span class="text-sm text-gray-400">正在连接酷安服务器...</span>
+        </div>
+
+        <!-- Error State -->
+        <div id="error-state" class="flex flex-col justify-center items-center py-12 hidden">
+            <i class="fas fa-exclamation-triangle text-red-400 text-4xl mb-3"></i>
+            <span class="text-sm text-gray-600 mb-4 text-center px-6">获取数据失败，请检查 Node 代理服务器状态或 Token 算法是否失效。</span>
+            <button onclick="fetchRealFeedData()" class="bg-coolapk text-white px-6 py-2 rounded-full text-sm font-medium shadow-md">重新加载</button>
+        </div>
+
+        <!-- View 1: Feed (Dynamic Content) -->
+        <div id="view-feed" class="pb-20 fade-in">
+            <!-- 动态流由 JS 渲染 -->
+        </div>
+
+        <!-- 新增：搜索结果视图层 -->
+        <div id="view-search-results" class="pb-20 hidden fade-in">
+            <div class="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b border-gray-100">
+                <div class="flex justify-between items-center mb-2">
+                    <span>搜索结果：<span id="search-keyword-display" class="font-bold text-coolapk"></span></span>
+                    <button onclick="clearSearch()" class="text-coolapk underline">返回发现</button>
+                </div>
+                <div class="flex space-x-4 text-[13px] font-medium" id="search-type-tabs">
+                    <button class="search-type-btn text-coolapk border-b-2 border-coolapk pb-1" data-type="all">综合</button>
+                    <button class="search-type-btn text-gray-500 pb-1" data-type="feed">动态</button>
+                    <button class="search-type-btn text-gray-500 pb-1" data-type="apk">应用</button>
+                    <button class="search-type-btn text-gray-500 pb-1" data-type="user">用户</button>
+                </div>
+            </div>
+            <div id="search-results-container" class="divide-y divide-gray-100"></div>
+            <div id="search-load-more" class="pb-24 pt-4 flex justify-center items-center hidden">
+                <i class="fas fa-circle-notch fa-spin text-coolapk text-xl mr-2"></i>
+                <span class="text-sm text-gray-400">正在加载更多...</span>
+            </div>
+        </div>
+
+        <!-- 新增：上滑加载更多指示器 -->
+        <div id="load-more-indicator" class="pb-24 pt-4 flex justify-center items-center hidden">
+            <i class="fas fa-circle-notch fa-spin text-coolapk text-xl mr-2"></i>
+            <span class="text-sm text-gray-400">正在加载更多...</span>
+        </div>
+
+        <!-- View 2: Apps (Static Mock for now) -->
+        <div id="view-apps" class="pb-20 hidden fade-in">
+            <div class="bg-white m-3 rounded-xl p-4 shadow-sm border border-gray-100">
+                <h3 class="font-bold text-lg mb-4 flex items-center"><i class="fas fa-fire text-red-500 mr-2"></i>应用热榜</h3>
+                <div id="app-list-container">
+                    <!-- App 列表由 JS 渲染 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- View 3: Profile (Static Mock) -->
+        <div id="view-profile" class="pb-20 hidden fade-in">
+            <div class="bg-white p-6 flex flex-col items-center border-b border-gray-100">
+                <img src="https://placehold.co/100x100/11B063/ffffff?text=User" alt="Avatar" class="w-20 h-20 rounded-full border-4 border-coolapk-light mb-3 shadow-sm">
+                <h2 class="text-xl font-bold">本地测试用户</h2>
+                <p class="text-xs text-gray-400 mt-1">发现科技新生活</p>
+                <div class="flex w-full justify-around mt-6 text-center">
+                    <div><div class="font-bold text-lg">0</div><div class="text-xs text-gray-500">动态</div></div>
+                    <div><div class="font-bold text-lg">0</div><div class="text-xs text-gray-500">关注</div></div>
+                    <div><div class="font-bold text-lg">0</div><div class="text-xs text-gray-500">粉丝</div></div>
+                </div>
+            </div>
+            <div class="mt-3 bg-white border-y border-gray-100">
+                <div class="flex items-center justify-between p-4 border-b border-gray-50 cursor-pointer hover:bg-gray-50">
+                    <div class="flex items-center text-gray-700 text-sm"><i class="fas fa-star w-6 text-yellow-500"></i>我的收藏</div>
+                    <i class="fas fa-chevron-right text-gray-300 text-xs"></i>
+                </div>
+                <div class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50">
+                    <div class="flex items-center text-gray-700 text-sm"><i class="fas fa-cog w-6 text-gray-500"></i>设置</div>
+                    <i class="fas fa-chevron-right text-gray-300 text-xs"></i>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 新增：动态详情页 (默认隐藏，全屏覆盖) -->
+    <div id="view-detail" class="hidden absolute inset-0 bg-gray-100 z-[60] flex flex-col slide-in-right">
+        <!-- 详情页头部 -->
+        <header class="bg-white px-4 py-3 flex items-center justify-between border-b border-gray-100 sticky top-0 z-50">
+            <button onclick="closeDetail()" class="text-gray-600 p-2 -ml-2 active:bg-gray-100 rounded-full w-10 h-10 flex items-center justify-center transition">
+                <i class="fas fa-arrow-left text-lg"></i>
+            </button>
+            <div class="flex-1 text-center font-bold text-lg mr-10 text-gray-800">动态详情</div>
+        </header>
+        
+        <!-- 详情正文及评论滚动区 -->
+        <main class="flex-1 overflow-y-auto no-scrollbar pb-16 bg-gray-100">
+            <div id="detail-feed-content" class="bg-white pb-2 mb-2 shadow-sm"></div>
+            
+            <div class="bg-white shadow-sm min-h-screen">
+                <div id="detail-comments-header" class="px-4 py-3 border-b border-gray-50 flex items-center justify-between sticky top-0 bg-white/95 backdrop-blur z-10">
+                    <h3 class="font-bold text-[15px] text-gray-800 flex items-center">
+                        <span class="w-1 h-4 bg-coolapk rounded-full mr-2"></span>
+                        全部回复 (<span id="detail-comment-count">0</span>)
+                    </h3>
+                    <div class="text-xs text-gray-400 flex space-x-3" id="detail-comment-tabs">
+                        <button class="comment-sort-btn text-coolapk font-medium" data-list-type="hot">最热</button>
+                        <button class="comment-sort-btn" data-list-type="lastupdate">最新</button>
+                    </div>
+                </div>
+                <div id="detail-comments-list" class="pb-6">
+                    <!-- 评论由 JS 渲染 -->
+                </div>
+                <div id="detail-comment-load-more" class="pb-6 pt-2 flex justify-center items-center hidden">
+                    <i class="fas fa-circle-notch fa-spin text-coolapk text-sm mr-2"></i>
+                    <span class="text-xs text-gray-400">加载更多评论...</span>
+                </div>
+            </div>
+        </main>
+        
+        <!-- 底部输入栏 -->
+        <div class="bg-white border-t border-gray-200 px-4 py-2.5 absolute bottom-0 w-full flex items-center space-x-3 pb-safe z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+            <div class="flex-1 bg-gray-100 rounded-full px-4 py-2 flex items-center text-gray-500">
+                <i class="fas fa-pen text-xs mr-2"></i>
+                <input type="text" placeholder="说点什么..." class="bg-transparent outline-none text-[13px] w-full placeholder-gray-500">
+            </div>
+            <button class="text-gray-400 hover:text-coolapk transition p-2"><i class="fas fa-image text-lg"></i></button>
+            <button class="text-gray-400 hover:text-coolapk transition p-2"><i class="fas fa-smile text-lg"></i></button>
+            <button class="bg-coolapk text-white px-4 py-1.5 rounded-full text-sm font-medium shadow-md shadow-coolapk/30">发送</button>
+        </div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="bg-white border-t border-gray-200 flex justify-around items-center py-2 pb-safe absolute bottom-0 w-full z-50">
+        <button class="nav-btn flex flex-col items-center p-2 text-coolapk w-1/3" data-view="view-feed">
+            <i class="fas fa-home text-xl mb-1"></i>
+            <span class="text-[10px] font-medium">首页</span>
+        </button>
+        <button class="nav-btn flex flex-col items-center p-2 text-gray-400 hover:text-gray-600 transition w-1/3" data-view="view-apps">
+            <i class="fas fa-shapes text-xl mb-1"></i>
+            <span class="text-[10px] font-medium">应用</span>
+        </button>
+        <button class="nav-btn flex flex-col items-center p-2 text-gray-400 hover:text-gray-600 transition w-1/3" data-view="view-profile">
+            <i class="fas fa-user text-xl mb-1"></i>
+            <span class="text-[10px] font-medium">我</span>
+        </button>
+    </nav>
+</div>
+
+<script>
+    const feedContainer = document.getElementById('view-feed');
+    const appsContainer = document.getElementById('app-list-container');
+    const loader = document.getElementById('loader');
+    const errorState = document.getElementById('error-state');
+    
+    // 搜索相关DOM
+    const searchInput = document.getElementById('global-search-input');
+    const searchClearBtn = document.getElementById('search-clear-btn');
+    const searchResultsView = document.getElementById('view-search-results');
+    const searchResultsContainer = document.getElementById('search-results-container');
+    const searchKeywordDisplay = document.getElementById('search-keyword-display');
+    const topTabs = document.getElementById('top-tabs');
+
+    // --- 全局状态管理 ---
+    const loadMoreIndicator = document.getElementById('load-more-indicator');
+    const searchLoadMoreIndicator = document.getElementById('search-load-more');
+    const detailCommentLoadMore = document.getElementById('detail-comment-load-more');
+    let allFeedsData = []; // 保存所有已加载数据用于详情页检索
+    let currentPage = 1;
+    let isLoading = false;
+    let hasMore = true;
+    let currentView = 'view-feed';
+    let currentSearchKeyword = '';
+    let currentSearchType = 'all'; // 搜索类型: all / feed / apk / user
+    let currentSearchPage = 1;
+    let searchHasMore = true;
+    let isSearchLoading = false;
+    let currentDetailId = null; // 当前详情页帖子ID
+    let currentCommentListType = 'hot'; // 评论排序: hot / lastupdate
+    let currentCommentPage = 1;
+    let commentHasMore = true;
+    let isCommentLoading = false;
+    // --- 首页 Tab 管理 ---
+    let mainTabsConfig = []; // 保存从 main/init 拉到的所有 Tab 配置 [{id,title,url,sticky...}]
+    let currentTabUrlPath = ''; // 当前激活 Tab 的 url 路径，空字符串表示"全站推荐"（indexV8）
+    let currentTabId = '__home__';
+
+    // --- 下拉刷新涉及元素 ---
+    const ptrIndicator = document.getElementById('ptr-indicator');
+    const ptrText = document.getElementById('ptr-text');
+    const ptrIcon = document.getElementById('ptr-icon');
+    const mainContent = document.getElementById('main-content');
+    let startY = 0;
+    let isPulling = false;
+    let ptrDistance = 0;
+
+    // 核心：防盗链图片代理转换函数
+    function getProxiedImageUrl(originalUrl) {
+        if (!originalUrl) return '';
+        // 如果已经是代理链接或者不是酷安的图片，直接返回
+        if (originalUrl.startsWith('http://localhost:3000') || !originalUrl.includes('coolapk.com')) {
+            return originalUrl;
+        }
+        // 转换为通过你的 Node.js 代理访问
+        return `http://localhost:3000/api/image?url=${encodeURIComponent(originalUrl)}`;
+    }
+
+    // 修复图片不能正常显示：自动规范化酷安图片链接并处理防盗链/相对路径
+    function resolveImageUrl(url) {
+        if (!url) return '';
+        let resolved = url;
+        // 如果已经是完整URL且带有协议
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+            resolved = url;
+        } else if (url.startsWith('//')) {
+            resolved = 'https:' + url;
+        } else {
+            // 酷安相对路径图片处理
+            resolved = 'https://img.coolapk.com' + (url.startsWith('/') ? '' : '/') + url;
+        }
+        // 套用代理函数，绕过防盗链
+        return getProxiedImageUrl(resolved);
+    }
+
+    // 格式化 Unix 时间戳 (秒) 到相对时间
+    function formatTime(timestamp) {
+        if (!timestamp) return '刚刚';
+        const now = Math.floor(Date.now() / 1000);
+        const diff = now - timestamp;
+        if (diff < 60) return `${diff} 秒前`;
+        if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+        if (diff < 2592000) return `${Math.floor(diff / 86400)} 天前`;
+        const date = new Date(timestamp * 1000);
+        return `${date.getMonth() + 1}-${date.getDate()}`;
+    }
+
+    // 判断是否为本地预览环境（Blob / Data URL / about:blank），统一 API 前缀
+    function getApiPrefix() {
+        const isLocalPreview = window.location.protocol === 'blob:' || window.location.protocol === 'data:' || window.location.protocol === 'about:';
+        return isLocalPreview ? 'http://localhost:3000/api' : '/api';
+    }
+
+    // ---------- 首页 Tab 初始化：GET /v6/main/init ----------
+    async function fetchMainInit() {
+        const prefix = getApiPrefix();
+        const resp = await fetch(`${prefix}/v6/main/init`);
+        if (!resp.ok) throw new Error('main/init API failed');
+        const json = await resp.json();
+        return json.data || {};
+    }
+
+    // 从 main/init 的返回里抽取"所有"Tab 配置（匹配真实 main/init JSON 结构中的各个分类卡片）
+    function extractTabsFromInit(initData) {
+        // initData 整体可能是 {data:[...]}，也可能直接传了 data
+        const root = (initData && Array.isArray(initData.data)) ? initData.data : (Array.isArray(initData) ? initData : []);
+
+        // 1) 找到所有 tab 配置类的 configCard（如 首页、数码、发现）
+        const configCards = root.filter(c =>
+            c && c.entityType === 'card'
+            && c.entityTemplate === 'configCard'
+            && (c.subTitle === 'tabConfig' || ['首页', '数码', '发现'].includes(c.title))
+        );
+
+        let tabList = [];
+        let defaultSelectedPageName = '';
+
+        // 2) 遍历这些卡片，分别提取 entities
+        configCards.forEach(card => {
+            if (Array.isArray(card.entities)) {
+                const cardTabs = card.entities
+                    .filter(e => e && (e.entityType === 'page' || (e.title && e.url)))
+                    .map(e => ({
+                        id: String(e.id || e.entityId || `tab_${e.title}`),
+                        title: e.title || '',
+                        url: e.url || '',
+                        page_name: e.page_name || '',
+                        order: typeof e.order === 'number' ? e.order : 9999,
+                        isHome: false,
+                    }))
+                    .filter(t => t.title && t.url)
+                    .sort((a, b) => a.order - b.order); // 卡片内部按 order 排序
+
+                tabList = tabList.concat(cardTabs); // 拼接到总列表中
+            }
+
+            // 3) 读取默认选中的 tab（以第一个读取到的 selectedHomeTab 为准）
+            if (!defaultSelectedPageName) {
+                if (card.extraDataArr && card.extraDataArr.selectedHomeTab) {
+                    defaultSelectedPageName = card.extraDataArr.selectedHomeTab;
+                } else if (typeof card.extraData === 'string') {
+                    try {
+                        const obj = JSON.parse(card.extraData);
+                        if (obj && obj.selectedHomeTab) defaultSelectedPageName = obj.selectedHomeTab;
+                    } catch (_) {}
+                }
+            }
+        });
+
+        // 4) 把"全站推荐"放在第一个（indexV8 接口，url 保持空串）
+        const tabs = [
+            {
+                id: '__home__',
+                title: '全站',
+                url: '',
+                page_name: '__home__',
+                order: -1,
+                isHome: true,
+            },
+            ...tabList,
+        ];
+
+        return { tabs, defaultSelectedPageName };
+    }
+
+    function renderTopTabs() {
+        const container = document.getElementById('top-tabs');
+        if (!container) return;
+        if (!mainTabsConfig || mainTabsConfig.length === 0) {
+            // 降级：默认首页 Tab 列表（与真实接口 main/init 返回的"首页 configCard.entities"对齐）
+            mainTabsConfig = [
+                { id: '__home__',     title: '全站', url: '',                              page_name: '__home__',               order: -1, isHome: true },
+                { id: '420',          title: '头条', url: '/main/headline',                page_name: 'V9_HOME_TAB_HEADLINE',   order: 3,  isHome: false },
+                { id: '415',          title: '热榜', url: '/page?url=V9_HOME_TAB_RANKING', page_name: 'V9_HOME_TAB_RANKING',   order: 4,  isHome: false },
+                { id: '417',          title: '问答', url: '/page?url=V9_HOME_TAB_WENDA',   page_name: 'V9_HOME_TAB_WENDA',     order: 30, isHome: false },
+                { id: '1175',         title: '酷图', url: '/page?url=V11_FIND_COOLPIC',    page_name: 'V11_FIND_COOLPIC',      order: 80, isHome: false },
+            ];
+        }
+        container.innerHTML = '';
+        mainTabsConfig.forEach(tab => {
+            const active = tab.id === currentTabId;
+            const btn = document.createElement('button');
+            btn.className = 'tab-btn whitespace-nowrap pb-1 ' + (active
+                ? 'active text-coolapk border-b-2 border-coolapk'
+                : 'text-gray-500');
+            btn.dataset.tabId = tab.id;
+            btn.dataset.tabUrl = tab.url || '';
+            btn.dataset.target = 'feed';
+            btn.textContent = tab.title;
+            container.appendChild(btn);
+        });
+
+        // 事件委托
+        container.onclick = (e) => {
+            const btn = e.target.closest('.tab-btn');
+            if (!btn) return;
+            const tabId = btn.dataset.tabId;
+            if (tabId === currentTabId) return;
+            const tabCfg = mainTabsConfig.find(t => t.id === tabId);
+            if (!tabCfg) return;
+            // 更新高亮
+            container.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.remove('text-coolapk', 'border-coolapk', 'active');
+                b.classList.add('text-gray-500');
+            });
+            btn.classList.add('text-coolapk', 'border-b-2', 'border-coolapk', 'active');
+            btn.classList.remove('text-gray-500');
+            // 切 Tab
+            currentTabId = tabId;
+            currentTabUrlPath = tabCfg.url || '';
+            // 回到顶部并刷新
+            const mc = document.getElementById('main-content');
+            if (mc) mc.scrollTop = 0;
+            fetchRealFeedData(true);
+        };
+    }
+
+    // 页面初始化时加载 main/init 配置 + 渲染 Tab + 拉信息流
+    async function bootMain() {
+        let extracted = null;
+        try {
+            const initData = await fetchMainInit();
+            extracted = extractTabsFromInit(initData);
+            mainTabsConfig = extracted.tabs;
+        } catch (err) {
+            console.warn('GET /v6/main/init 失败，降级为默认 Tab 配置:', err);
+            mainTabsConfig = [];
+        }
+
+        // 为了兼容 renderTopTabs 里 tabs 为空的降级逻辑：如果 extracted 也为空数组/mock 就交给 renderTopTabs 自己降级
+        renderTopTabs();
+
+        // 根据 defaultSelectedPageName 找到匹配的 tab 默认激活
+        let defaultTabId = (mainTabsConfig[0] && mainTabsConfig[0].id) || '__home__';
+        let defaultTabUrl = (mainTabsConfig[0] && mainTabsConfig[0].url) || '';
+        if (extracted && extracted.defaultSelectedPageName) {
+            const t = mainTabsConfig.find(x => x.page_name === extracted.defaultSelectedPageName);
+            if (t) {
+                defaultTabId = t.id;
+                defaultTabUrl = t.url || '';
+            }
+        }
+        currentTabId = defaultTabId;
+        currentTabUrlPath = defaultTabUrl;
+        renderTopTabs(); // 再渲染一次以应用默认高亮
+        fetchRealFeedData(true);
+    }
+
+    // 渲染单条评论 HTML
+    function renderSingleComment(comment) {
+        // 兼容酷安真实接口字段：username / userAvatar / message / likenum / dateline
+        const userInfo = comment.userInfo || {};
+        const uname = userInfo.username || comment.username || comment.uusername || '酷友';
+        const avatar = resolveImageUrl(userInfo.userAvatar || comment.userAvatar || comment.uavatar || 'https://placehold.co/100x100/cccccc/ffffff?text=U');
+        const content = comment.message || comment.replyMessage || comment.content || '';
+        const likeCnt = comment.likenum || comment.likeNum || comment.likes || 0;
+        const dl = comment.dateline || comment.time || 0;
+        const floorText = comment.floor ? ` · ${comment.floor}楼` : '';
+        return `
+            <div class="px-4 py-3 border-b border-gray-50 flex space-x-3 active:bg-gray-50 transition cursor-pointer">
+                <img src="${avatar}" class="w-8 h-8 rounded-full border border-gray-100 object-cover mt-1 shrink-0" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='https://placehold.co/100x100/cccccc/ffffff?text=U'">
+                <div class="flex-1 min-w-0">
+                    <div class="flex justify-between items-start">
+                        <span class="text-[13px] font-medium text-gray-600 truncate">${uname}</span>
+                        <div class="text-gray-400 text-xs flex items-center space-x-1 hover:text-coolapk shrink-0 ml-2">
+                            <i class="far fa-thumbs-up"></i>
+                            <span>${likeCnt}</span>
+                        </div>
+                    </div>
+                    <div class="text-[14px] text-gray-800 mt-1 leading-relaxed feed-content word-break break-words">${content.replace(/\n/g, '<br>')}</div>
+                    <div class="text-[11px] text-gray-400 mt-2">${formatTime(dl)}${floorText} · 回复</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function generateMockFeeds() {
+        const now = Math.floor(Date.now() / 1000);
+        return [
+            {
+                id: 'mock_1',
+                entityType: 'feed',
+                userInfo: { username: '数码闲聊站', userAvatar: 'https://placehold.co/100x100/ff9900/ffffff?text=数' },
+                message: '骁龙8 Gen4 终端跑分测试出炉，这代性能提升确实有东西。大家觉得日常使用还会卡顿吗？',
+                picArr: ['https://placehold.co/600x400/eeeeee/888888?text=Benchmark+Test', 'https://placehold.co/600x400/dddddd/666666?text=CPU+Stats'],
+                dateline: now - 600,
+                device_title: 'Xiaomi 15 Pro',
+                likenum: 1452,
+                replynum: 328
+            },
+            {
+                id: 'mock_2',
+                entityType: 'feed',
+                userInfo: { username: '独立开发者_老李', userAvatar: 'https://placehold.co/100x100/3366cc/ffffff?text=李' },
+                message: '今天终于把一直想做的网页版酷安 Demo 跑通了，去除了原生依赖，纯靠 Tailwind 和 JS，体验居然还算丝滑！发个酷安庆祝一下。🎉\n刚才又加入了下拉刷新和分页，快来试试手感。',
+                picArr: [],
+                dateline: now - 3600,
+                device_title: 'MacBook Pro',
+                likenum: 1205,
+                replynum: 342
+            },
+            {
+                id: 'mock_3',
+                entityType: 'feed',
+                userInfo: { username: 'Android探索者', userAvatar: 'https://placehold.co/100x100/11B063/ffffff?text=A' },
+                message: '分享一个超好用的 Magisk 模块，可以强制所有 APP 开启沉浸式状态栏。不用再忍受顶部大黑边了。链接放评论区。',
+                picArr: ['https://placehold.co/300x500/111111/ffffff?text=Screenshot'],
+                dateline: now - 10800,
+                device_title: 'Pixel 8',
+                likenum: 89,
+                replynum: 45
+            }
+        ];
+    }
+
+    // --- 新增：模拟评论数据 ---
+    function getMockComments() {
+        const now = Math.floor(Date.now() / 1000);
+        return [
+            { id: 1, user: '酷友_89757', avatar: 'https://placehold.co/100x100/e74c3c/ffffff?text=酷', content: '前排围观！这个更新太赞了，网页版越来越像原生了！', time: now - 120, likes: 45 },
+            { id: 2, user: '搞机达人', avatar: 'https://placehold.co/100x100/3498db/ffffff?text=机', content: '体验确实流畅，如果不用原生跑起来会不会发热卡顿？', time: now - 300, likes: 12 },
+            { id: 3, user: '吃瓜群众', avatar: 'https://placehold.co/100x100/2ecc71/ffffff?text=瓜', content: '留名，感谢楼主分享。', time: now - 1000, likes: 2 },
+            { id: 4, user: 'UI设计师', avatar: 'https://placehold.co/100x100/9b59b6/ffffff?text=U', content: '细节做得不错，下拉动画的阻尼感还可以再调顺滑一点。', time: now - 3600, likes: 8 }
+        ];
+    }
+
+    async function fetchRealFeedData(isRefresh = false) {
+        if (isLoading || (!hasMore && !isRefresh)) return;
+        isLoading = true;
+
+        if (isRefresh) {
+            currentPage = 1;
+            hasMore = true;
+        } else {
+            loader.classList.add('hidden');
+            loadMoreIndicator.classList.remove('hidden');
+        }
+
+        if (currentPage === 1 && !isRefresh) {
+            feedContainer.innerHTML = '';
+            loader.classList.remove('hidden');
+            errorState.classList.add('hidden');
+        }
+
+        try {
+            const prefix = getApiPrefix();
+            let apiUrl;
+            if (!currentTabUrlPath) {
+                // 全站推荐 → indexV8
+                apiUrl = `${prefix}/v6/main/indexV8?page=${currentPage}`;
+            } else if (currentTabUrlPath.includes('/page?url=')) {
+                // 酷图 / 热榜 等带 page?url=XXX 的，提取出 XXX 传给 dataList
+                const realUrlParam = currentTabUrlPath.split('url=')[1];
+                apiUrl = `${prefix}/v6/page/dataList?url=${encodeURIComponent(realUrlParam)}&page=${currentPage}`;
+            } else {
+                // 头条等自带独立路径的（如 /main/headline）
+                // 把路径前的斜杠处理掉，避免双斜杠
+                const cleanPath = currentTabUrlPath.startsWith('/') ? currentTabUrlPath : `/${currentTabUrlPath}`;
+                apiUrl = `${prefix}/v6${cleanPath}?page=${currentPage}`;
+            }
+            
+            const response = await fetch(apiUrl);
+            
+            if (!response.ok) throw new Error('API Response not OK');
+            
+            const result = await response.json();
+            
+            // 兼容 page/dataList 可能返回 result.data.data / result.data.list 等情况
+            let rawList = result.data;
+            if (rawList && !Array.isArray(rawList)) {
+                rawList = rawList.data || rawList.list || rawList.feeds || rawList.entities || [];
+            }
+            if (!Array.isArray(rawList)) rawList = [];
+
+            // 过滤：支持动态(feed)、头条文章(article)、图集(picture)，或带有标题/正文/图片的数据
+            const feedList = rawList.filter(item => 
+                item && (item.entityType === 'feed' || item.entityType === 'article' || item.entityType === 'picture' || item.message || item.title || (item.picArr && item.picArr.length > 0))
+            );
+
+            if (feedList.length === 0) hasMore = false;
+
+            // 给每个帖子注入唯一标识，供详情检索
+            feedList.forEach(item => { if(!item.id) item.id = 'real_' + Math.random().toString(36).substr(2, 9); });
+
+            if (isRefresh || currentPage === 1) {
+                allFeedsData = feedList;
+                feedContainer.innerHTML = '';
+            } else {
+                allFeedsData = allFeedsData.concat(feedList);
+            }
+
+            renderRealFeed(feedList);
+            currentPage++;
+
+        } catch (error) {
+            console.warn('代理请求失败，正切换为本地模拟数据预览模式:', error.message);
+            if (isRefresh || currentPage === 1) {
+                const mocks = generateMockFeeds();
+                allFeedsData = mocks;
+                feedContainer.innerHTML = '';
+                renderRealFeed(mocks);
+            } else {
+                // 模拟第二页的加载
+                setTimeout(() => {
+                    const moreMocks = generateMockFeeds().map(item => ({...item, id: 'mock_' + Math.random().toString(36).substr(2, 9)}));
+                    allFeedsData = allFeedsData.concat(moreMocks);
+                    renderRealFeed(moreMocks);
+                }, 500);
+            }
+            if (currentPage >= 3) hasMore = false; // 模拟只有三页
+            currentPage++;
+        } finally {
+            isLoading = false;
+            loader.classList.add('hidden');
+            loadMoreIndicator.classList.add('hidden');
+        }
+    }
+
+    // 渲染酷安真实 JSON 数据到 DOM
+    function renderRealFeed(feeds, container = feedContainer, append = true) {
+        if (!append) container.innerHTML = '';
+        if (feeds.length === 0 && currentPage === 1 && container === feedContainer) {
+            container.innerHTML = '<div class="text-center py-10 text-gray-400">没有获取到动态内容</div>';
+            return;
+        }
+
+        feeds.forEach(post => {
+            const userInfo = post.userInfo || {};
+            const username = userInfo.username || post.username || '匿名酷友';
+            const userAvatar = resolveImageUrl(userInfo.userAvatar || post.userAvatar || 'https://placehold.co/100x100/11B063/ffffff?text=U');
+            
+            const message = post.message || post.title || '无正文内容';
+            
+            const picArr = post.picArr || [];
+            let imageHtml = '';
+            if (picArr.length > 0) {
+                let gridClass = 'grid-cols-1';
+                if (picArr.length === 2 || picArr.length === 4) gridClass = 'grid-cols-2';
+                else if (picArr.length >= 3) gridClass = 'grid-cols-3';
+
+                imageHtml = `<div class="mt-3 grid ${gridClass} gap-1">`;
+                picArr.slice(0, 9).forEach(pic => {
+                    const resolvedPic = resolveImageUrl(pic);
+                    imageHtml += `
+                        <div class="aspect-square w-full rounded-md overflow-hidden bg-gray-100">
+                            <img src="${resolvedPic}" class="w-full h-full object-cover" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='https://placehold.co/300x300/f3f4f6/cccccc?text=加载失败';">
+                        </div>`;
+                });
+                imageHtml += `</div>`;
+            }
+
+            const deviceTitle = post.device_title ? `<span class="text-blue-500 ml-2 text-[11px]">${post.device_title}</span>` : '';
+
+            const postHtml = `
+                <div class="bg-white mb-2 shadow-sm border-b border-gray-100 active:bg-gray-50 transition cursor-pointer" onclick="openDetail('${post.id}')">
+                    <div class="p-4 pb-2">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center space-x-3">
+                                <img src="${userAvatar}" class="w-10 h-10 rounded-full border border-gray-100 object-cover" referrerpolicy="no-referrer" onerror="this.src='https://placehold.co/100x100/11B063/ffffff?text=U'">
+                                <div>
+                                    <div class="font-semibold text-sm text-gray-800">${username}</div>
+                                    <div class="text-xs text-gray-400 flex items-center mt-0.5">
+                                        <span>${formatTime(post.dateline)}</span>
+                                        ${deviceTitle}
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="text-coolapk border border-coolapk rounded-full px-3 py-0.5 text-xs font-medium hover:bg-coolapk hover:text-white transition" onclick="event.stopPropagation()">关注</button>
+                        </div>
+                        
+                        <div class="text-[15px] text-gray-800 leading-relaxed feed-content word-break break-words line-clamp-5">
+                            ${message.replace(/\n/g, '<br>')}
+                        </div>
+                        
+                        ${imageHtml}
+                    </div>
+                    
+                    <div class="flex items-center justify-between py-3 mt-1 text-gray-400 px-6 border-t border-gray-50" onclick="event.stopPropagation()">
+                        <div class="flex items-center space-x-1.5 cursor-pointer hover:text-coolapk transition">
+                            <i class="far fa-thumbs-up text-lg"></i>
+                            <span class="text-xs font-medium">${post.likenum || 0}</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 cursor-pointer hover:text-blue-500 transition" onclick="openDetail('${post.id}', true)">
+                            <i class="far fa-comment text-lg"></i>
+                            <span class="text-xs font-medium">${post.replynum || 0}</span>
+                        </div>
+                        <div class="flex items-center space-x-1.5 cursor-pointer hover:text-green-500 transition">
+                            <i class="fas fa-share text-lg"></i>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', postHtml);
+        });
+    }
+
+    // --- 完善搜索功能逻辑 ---
+    searchInput.addEventListener('input', (e) => {
+        const val = e.target.value.trim();
+        if (val) {
+            searchClearBtn.classList.remove('hidden');
+        } else {
+            searchClearBtn.classList.add('hidden');
+            if (currentView === 'view-search-results') {
+                clearSearch();
+            }
+        }
+    });
+
+    searchInput.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+            const keyword = searchInput.value.trim();
+            if (!keyword) return;
+            await executeSearch(keyword);
+        }
+    });
+
+    searchClearBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        searchClearBtn.classList.add('hidden');
+        clearSearch();
+    });
+
+    function clearSearch() {
+        searchResultsView.classList.add('hidden');
+        document.getElementById(currentView).classList.remove('hidden');
+        if (currentView === 'view-feed') {
+            topTabs.classList.remove('hidden');
+        }
+        currentSearchKeyword = '';
+    }
+
+    // 执行搜索（可分页调用）
+    async function executeSearch(keyword, isAppend = false) {
+        if (!isAppend) {
+            currentSearchKeyword = keyword;
+            currentSearchPage = 1;
+            searchHasMore = true;
+            searchKeywordDisplay.textContent = keyword;
+            // 隐藏其他所有视图，显示搜索结果视图
+            ['view-feed', 'view-apps', 'view-profile', 'view-detail'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            topTabs.classList.add('hidden');
+            searchResultsView.classList.remove('hidden');
+            currentView = 'view-search-results';
+            searchResultsContainer.innerHTML = `
+                <div class="flex flex-col justify-center items-center py-12">
+                    <i class="fas fa-circle-notch fa-spin text-coolapk text-2xl mb-2"></i>
+                    <span class="text-xs text-gray-400">正在搜索 "${keyword}"...</span>
+                </div>
+            `;
+        } else {
+            if (isSearchLoading || !searchHasMore) return;
+        }
+
+        isSearchLoading = true;
+        if (isAppend) searchLoadMoreIndicator.classList.remove('hidden');
+
+        try {
+            const prefix = getApiPrefix();
+            const searchUrl = `${prefix}/v6/search?type=${currentSearchType}&searchValue=${encodeURIComponent(currentSearchKeyword)}&page=${currentSearchPage}`;
+            
+            const response = await fetch(searchUrl);
+            if (!response.ok) throw new Error('Search API failed');
+            const resData = await response.json();
+            
+            let items = resData.data || [];
+            if (items.length === 0) searchHasMore = false;
+
+            // 过滤出有展示价值的条目：动态/文章/应用/用户
+            const searchFeeds = items.filter(i => 
+                i.entityType === 'feed' || i.entityType === 'article' || 
+                i.entityType === 'apk' || i.entityType === 'user' || i.message || i.apkName
+            );
+            
+            if (!isAppend && searchFeeds.length === 0) {
+                searchResultsContainer.innerHTML = `
+                    <div class="text-center py-16 text-gray-400 text-sm">
+                        <i class="fas fa-search text-3xl mb-2 text-gray-300"></i>
+                        <p>未找到与 "${currentSearchKeyword}" 相关的内容</p>
+                    </div>
+                `;
+                return;
+            }
+
+            if (searchFeeds.length === 0) return;
+
+            // 保存到全局以便详情页可以点击进入
+            allFeedsData = allFeedsData.concat(searchFeeds.filter(i => i.entityType === 'feed' || i.entityType === 'article'));
+            
+            if (!isAppend) searchResultsContainer.innerHTML = '';
+
+            searchFeeds.forEach(item => {
+                const card = renderSearchResultItem(item);
+                if (card) searchResultsContainer.insertAdjacentHTML('beforeend', card);
+            });
+
+            currentSearchPage++;
+
+        } catch (err) {
+            console.warn('后端搜索接口不可用:', err);
+            if (!isAppend) {
+                // 本地内容过滤匹配
+                const matched = allFeedsData.filter(item => {
+                    const text = (item.message || item.title || '') + (item.userInfo?.username || '');
+                    return text.includes(currentSearchKeyword);
+                });
+                if (matched.length === 0) {
+                    searchResultsContainer.innerHTML = `
+                        <div class="text-center py-16 text-gray-400 text-sm">
+                            <i class="fas fa-search text-3xl mb-2 text-gray-300"></i>
+                            <p>本地缓存中未找到与 "${currentSearchKeyword}" 相关的结果</p>
+                        </div>
+                    `;
+                } else {
+                    searchResultsContainer.innerHTML = '';
+                    renderRealFeed(matched, searchResultsContainer, false);
+                }
+            }
+            searchHasMore = false;
+        } finally {
+            isSearchLoading = false;
+            searchLoadMoreIndicator.classList.add('hidden');
+        }
+    }
+
+    // 同步搜索类型 Tab 高亮状态
+    function syncSearchTypeTabsUI() {
+        const tabs = document.querySelectorAll('.search-type-btn');
+        if (!tabs || tabs.length === 0) return;
+        tabs.forEach(b => {
+            if (b.dataset.type === currentSearchType) {
+                b.classList.add('text-coolapk', 'border-b-2', 'border-coolapk');
+                b.classList.remove('text-gray-500');
+            } else {
+                b.classList.remove('text-coolapk', 'border-b-2', 'border-coolapk');
+                b.classList.add('text-gray-500');
+            }
+        });
+    }
+
+    // 给话题/用户标签点击调用：设定搜索类型 -> 同步 UI -> 执行搜索（可在非 async 事件里调用）
+    function awaitable_executeSearch(keyword, type = 'all') {
+        currentSearchType = type || 'all';
+        syncSearchTypeTabsUI();
+        // 把搜索触发包装成微任务，避免同步阻塞点击事件
+        Promise.resolve().then(() => executeSearch(keyword, false));
+    }
+
+    // 根据条目类型渲染不同的搜索结果卡片（动态/应用/用户）
+    function renderSearchResultItem(item) {
+        const et = item.entityType || (item.apkName ? 'apk' : (item.username ? 'user' : 'feed'));
+        if (et === 'feed' || et === 'article' || item.message || item.title) {
+            // 动态/文章：先用标准条目化渲染（但直接调用 renderRealFeed 可能更复杂，这里直接给单条 HTML
+            if (!item.id) item.id = 's_' + Math.random().toString(36).substr(2, 9);
+            const userInfo = item.userInfo || {};
+            const username = userInfo.username || item.username || '匿名酷友';
+            const userAvatar = resolveImageUrl(userInfo.userAvatar || item.userAvatar || 'https://placehold.co/100x100/11B063/ffffff?text=U');
+            const message = item.message || item.title || '无正文';
+            const picArr = item.picArr || [];
+            let imgHtml = '';
+            if (picArr.length > 0) {
+                imgHtml = `<div class="mt-2 max-h-24 overflow-hidden rounded-md bg-gray-100"><img src="${resolveImageUrl(picArr[0])}" class="w-full h-24 object-cover"></div>`;
+            }
+            return `
+                <div class="p-3 active:bg-gray-50 cursor-pointer" onclick="openDetail('${item.id}')">
+                    <div class="flex items-center space-x-2 mb-2">
+                        <img src="${userAvatar}" class="w-7 h-7 rounded-full object-cover" referrerpolicy="no-referrer" onerror="this.src='https://placehold.co/100x100/11B063/ffffff?text=U'">
+                        <span class="text-[12px] font-medium text-gray-700">${username}</span>
+                        <span class="text-[11px] text-gray-400">${formatTime(item.dateline)}</span>
+                    </div>
+                    <div class="text-[14px] text-gray-800 leading-snug line-clamp-2">${message.replace(/\n/g, '<br>')}</div>
+                    ${imgHtml}
+                </div>
+            `;
+        } else if (et === 'apk' || item.apkName) {
+            // 应用卡片
+            const icon = resolveImageUrl(item.apkIconUrl || item.icon || 'https://placehold.co/100x100/11B063/ffffff?text=A');
+            const name = item.apkName || item.name || '未知应用';
+            const desc = item.apkDescription || item.desc || item.brief || '';
+            return `
+                <div class="p-3 flex items-center space-x-3 active:bg-gray-50 cursor-pointer">
+                    <img src="${icon}" class="w-11 h-11 rounded-xl object-cover shrink-0" referrerpolicy="no-referrer" onerror="this.src='https://placehold.co/100x100/11B063/ffffff?text=A'">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-bold text-sm text-gray-800 truncate">${name}</div>
+                        <div class="text-[12px] text-gray-500 truncate">${desc}</div>
+                    </div>
+                    <button class="bg-coolapk-light hover:bg-coolapk hover:text-white text-coolapk font-bold text-xs px-3 py-1 rounded-full transition">下载</button>
+                </div>
+            `;
+        } else if (et === 'user' || item.username) {
+            const avatar = resolveImageUrl(item.userAvatar || 'https://placehold.co/100x100/999999/ffffff?text=U');
+            const uname = item.username || '酷友';
+            const bio = item.bio || item.sign || '';
+            return `
+                <div class="p-3 flex items-center space-x-3 active:bg-gray-50 cursor-pointer">
+                    <img src="${avatar}" class="w-11 h-11 rounded-full object-cover shrink-0" referrerpolicy="no-referrer" onerror="this.src='https://placehold.co/100x100/999999/ffffff?text=U'">
+                    <div class="flex-1 min-w-0">
+                        <div class="font-bold text-sm text-gray-800 truncate">${uname}</div>
+                        <div class="text-[12px] text-gray-500 truncate">${bio || '这个人很懒，什么都没有写'}</div>
+                    </div>
+                    <button class="border border-coolapk text-coolapk font-bold text-xs px-3 py-1 rounded-full hover:bg-coolapk hover:text-white transition">关注</button>
+                </div>
+            `;
+        }
+        return '';
+    }
+
+    // --- 详情页逻辑 ---
+    async function fetchFeedDetail(feedId) {
+        const prefix = getApiPrefix();
+        const response = await fetch(`${prefix}/v6/feed/detail?id=${encodeURIComponent(feedId)}`);
+        if (!response.ok) throw new Error('Feed detail API failed');
+        const json = await response.json();
+        return json.data || null;
+    }
+
+    async function fetchCommentList(feedId, page = 1, listType = 'hot') {
+        const prefix = getApiPrefix();
+        const response = await fetch(`${prefix}/v6/feed/replyList?id=${encodeURIComponent(feedId)}&page=${page}`);
+        if (!response.ok) throw new Error('Reply list API failed');
+        const json = await response.json();
+        return json.data || [];
+    }
+
+    function renderFeedDetailContent(post) {
+        const userInfo = post.userInfo || {};
+        const username = userInfo.username || post.username || '匿名酷友';
+        const userAvatar = userInfo.userAvatar || post.userAvatar || 'https://placehold.co/100x100/11B063/ffffff?text=U';
+        const message = post.message || post.title || '无正文内容';
+        const deviceTitle = post.device_title ? `<span class="text-blue-500 ml-2 text-[11px]">${post.device_title}</span>` : '';
+        const likeNum = post.likenum || post.likeNum || 0;
+
+        let imageHtml = '';
+        if (post.picArr && post.picArr.length > 0) {
+            imageHtml = `<div class="mt-4 flex flex-col space-y-2">`;
+            post.picArr.forEach(pic => {
+                const resolvedPic = resolveImageUrl(pic);
+                imageHtml += `<img src="${resolvedPic}" class="w-full rounded-lg object-contain bg-gray-50 shadow-sm" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='https://placehold.co/600x400/f3f4f6/cccccc?text=图片加载失败'">`;
+            });
+            imageHtml += `</div>`;
+        }
+
+        return `
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center space-x-3">
+                        <img src="${resolveImageUrl(userAvatar)}" class="w-11 h-11 rounded-full border border-gray-100 object-cover" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='https://placehold.co/100x100/11B063/ffffff?text=U'">
+                        <div>
+                            <div class="font-bold text-[15px] text-gray-800">${username}</div>
+                            <div class="text-[11px] text-gray-400 flex items-center mt-1">
+                                <span>${formatTime(post.dateline)}</span>
+                                ${deviceTitle}
+                            </div>
+                        </div>
+                    </div>
+                    <button class="bg-coolapk text-white rounded-full px-4 py-1.5 text-sm font-medium shadow-sm">关注</button>
+                </div>
+                <div class="text-[16px] text-gray-800 leading-relaxed feed-content word-break break-words">
+                    ${message.replace(/\n/g, '<br>')}
+                </div>
+                ${imageHtml}
+            </div>
+            <div class="flex items-center justify-around py-4 mt-2 text-gray-500 border-t border-gray-50 mx-4">
+                <div class="flex flex-col items-center cursor-pointer hover:text-coolapk transition">
+                    <i class="far fa-thumbs-up text-xl mb-1"></i>
+                    <span class="text-[11px]">点赞 ${likeNum}</span>
+                </div>
+                <div class="flex flex-col items-center cursor-pointer hover:text-yellow-500 transition">
+                    <i class="far fa-star text-xl mb-1"></i>
+                    <span class="text-[11px]">收藏</span>
+                </div>
+                <div class="flex flex-col items-center cursor-pointer hover:text-green-500 transition">
+                    <i class="fas fa-share text-xl mb-1"></i>
+                    <span class="text-[11px]">分享</span>
+                </div>
+            </div>
+        `;
+    }
+
+    // 拉取评论列表（可分页调用，append=true 为追加模式）
+    async function loadCommentList(feedId, append = false) {
+        if (isCommentLoading) return;
+        if (append && !commentHasMore) return;
+
+        if (!append) {
+            currentCommentPage = 1;
+            commentHasMore = true;
+        }
+
+        isCommentLoading = true;
+        if (append) detailCommentLoadMore.classList.remove('hidden');
+
+        const commentsContainer = document.getElementById('detail-comments-list');
+        if (!append) commentsContainer.innerHTML = `<div class="flex justify-center py-10"><i class="fas fa-circle-notch fa-spin text-coolapk"></i></div>`;
+
+        try {
+            let comments = await fetchCommentList(feedId, currentCommentPage, currentCommentListType);
+            if (comments.length === 0) {
+                commentHasMore = false;
+                if (!append) commentsContainer.innerHTML = `<div class="text-center py-10 text-gray-400 text-sm">还没有评论，快来抢沙发吧~</div>`;
+                return;
+            }
+
+            if (!append) commentsContainer.innerHTML = '';
+
+            comments.forEach(c => commentsContainer.insertAdjacentHTML('beforeend', renderSingleComment(c)));
+            currentCommentPage++;
+            // 如果不足一页，认为没有更多
+            if (comments.length < 15) commentHasMore = false;
+        } catch (err) {
+            console.warn('真实评论接口不可用，降级为 Mock 评论:', err);
+            if (!append) {
+                const mockComments = getMockComments();
+                commentsContainer.innerHTML = '';
+                mockComments.forEach(c => commentsContainer.insertAdjacentHTML('beforeend', renderSingleComment(c)));
+            }
+            commentHasMore = false;
+        } finally {
+            isCommentLoading = false;
+            detailCommentLoadMore.classList.add('hidden');
+        }
+    }
+
+    async function openDetail(id, focusComments = false) {
+        currentDetailId = id;
+        currentCommentPage = 1;
+        commentHasMore = true;
+        isCommentLoading = false;
+        currentCommentListType = 'hot';
+
+        // 更新评论排序 Tab UI
+        document.querySelectorAll('.comment-sort-btn').forEach(b => {
+            if (b.dataset.listType === currentCommentListType) {
+                b.classList.add('text-coolapk', 'font-medium');
+            } else {
+                b.classList.remove('text-coolapk', 'font-medium');
+            }
+        });
+
+        const viewDetail = document.getElementById('view-detail');
+        viewDetail.classList.remove('hidden');
+
+        // 打开详情页前先把滚动条复位，避免上一次滚动位置影响
+        const detailScroller = document.querySelector('#view-detail > main');
+        if (detailScroller) detailScroller.scrollTop = 0;
+
+        // 先尝试从已有的 feed 列表获取，快速展示（骨架）
+        let post = allFeedsData.find(item => item.id == id);
+        if (post) {
+            document.getElementById('detail-feed-content').innerHTML = renderFeedDetailContent(post);
+            document.getElementById('detail-comment-count').innerText = post.replynum || 0;
+        } else {
+            document.getElementById('detail-feed-content').innerHTML = `<div class="flex justify-center py-16"><i class="fas fa-circle-notch fa-spin text-coolapk text-2xl"></i></div>`;
+        }
+
+        // 尝试调用真实详情接口，获取更完整的数据（富文本、完整图片等）
+        try {
+            const detailId = (post && (post.feedId || post.fid)) ? (post.feedId || post.fid) : id;
+            // 如果 id 是 mock_ 开头或 real_ 随机前缀，尝试拿真实 id
+            let realId = detailId;
+            if (typeof detailId === 'string' && !/^\d+$/.test(detailId)) {
+                if (post && post.entityId) realId = post.entityId;
+                else if (post && post.fid) realId = post.fid;
+                else if (post && post.feedId) realId = post.feedId;
+            }
+            const realDetail = await fetchFeedDetail(realId);
+            if (realDetail) {
+                post = Object.assign({}, post || {}, realDetail);
+                if (!post.id) post.id = id;
+                // 更新全局数据，便于回退后也能使用
+                const idx = allFeedsData.findIndex(x => x.id == id);
+                if (idx >= 0) allFeedsData[idx] = post;
+                document.getElementById('detail-feed-content').innerHTML = renderFeedDetailContent(post);
+                document.getElementById('detail-comment-count').innerText = realDetail.replynum || realDetail.replyNum || 0;
+            }
+        } catch (err) {
+            console.warn('详情接口不可用，继续使用列表数据展示:', err);
+        }
+
+        // 拉取评论
+        await loadCommentList(post?.feedId || post?.fid || post?.entityId || id, false);
+
+        // 定位到评论区（带平滑动画）
+        if (focusComments) {
+            // 使用 requestAnimationFrame 保证 DOM 布局计算完成
+            requestAnimationFrame(() => {
+                const scroller = document.querySelector('#view-detail > main');
+                const header = document.getElementById('detail-comments-header');
+                if (scroller && header) {
+                    const offsetTop = header.offsetTop - 8;
+                    scroller.scrollTo({ top: offsetTop, behavior: 'smooth' });
+                }
+            });
+            // 兜底：200ms 后再滚一次，避免图片加载后高度变化
+            setTimeout(() => {
+                const scroller = document.querySelector('#view-detail > main');
+                const header = document.getElementById('detail-comments-header');
+                if (scroller && header && scroller.scrollTop < header.offsetTop - 20) {
+                    scroller.scrollTo({ top: header.offsetTop - 8, behavior: 'smooth' });
+                }
+            }, 250);
+        }
+    }
+
+    function closeDetail() {
+        document.getElementById('view-detail').classList.add('hidden');
+        currentDetailId = null;
+        setTimeout(() => {
+            document.getElementById('detail-feed-content').innerHTML = '';
+            document.getElementById('detail-comments-list').innerHTML = '';
+        }, 300);
+    }
+
+    // --- 评论排序 / 搜索类型 / 富文本链接拦截 ---
+    document.addEventListener('click', (e) => {
+        // 拦截 feed-content 内的链接（话题/用户/外链），避免跳 404
+        const linkEl = e.target.closest('.feed-content a, .feed-content [href]');
+        if (linkEl) {
+            let href = linkEl.getAttribute('href') || '';
+            const text = (linkEl.textContent || '').trim();
+            e.preventDefault();
+            e.stopPropagation();
+
+            // --- 话题标签：/t/xxx?type=0  /t/xxx ---
+            if (href.startsWith('/t/')) {
+                const keyword = text.replace(/^#|#$/g, '').trim() || href.replace(/^\/t\//, '').split('?')[0].split('/')[0];
+                if (keyword) {
+                    // 关闭详情页并切换到搜索视图
+                    closeDetail();
+                    searchInput.value = keyword;
+                    searchClearBtn.classList.remove('hidden');
+                    currentSearchType = 'feed'; // 直接看动态
+                    // 同步搜索类型 UI 高亮（由于此时可能搜索视图还没初始化，先在 executeSearch 里处理）
+                    awaitable_executeSearch(keyword, 'feed');
+                }
+                return;
+            }
+            // --- 用户卡片：/u/xxx  /user/xxx ---
+            if (href.startsWith('/u/') || href.startsWith('/user/')) {
+                const keyword = text.replace(/^@/, '').trim() || href.split('/').filter(Boolean).pop() || '';
+                if (keyword) {
+                    closeDetail();
+                    searchInput.value = keyword;
+                    searchClearBtn.classList.remove('hidden');
+                    awaitable_executeSearch(keyword, 'user');
+                }
+                return;
+            }
+            // --- 酷安站内其他相对路径：按关键词搜索标题内容 ---
+            if (href.startsWith('/')) {
+                const keyword = text || decodeURIComponent(href.replace(/^\/+/, '').replace(/[?/].*/, ''));
+                if (keyword) {
+                    closeDetail();
+                    searchInput.value = keyword;
+                    searchClearBtn.classList.remove('hidden');
+                    awaitable_executeSearch(keyword, 'all');
+                }
+                return;
+            }
+            // --- http(s) 外链：新窗口打开 ---
+            if (/^https?:\/\//i.test(href)) {
+                window.open(href, '_blank', 'noopener,noreferrer');
+                return;
+            }
+            // 兜底：取文本做关键词搜索
+            if (text) {
+                closeDetail();
+                searchInput.value = text;
+                searchClearBtn.classList.remove('hidden');
+                awaitable_executeSearch(text, 'all');
+            }
+            return;
+        }
+
+        const sortBtn = e.target.closest('.comment-sort-btn');
+        if (sortBtn && currentDetailId) {
+            currentCommentListType = sortBtn.dataset.listType || 'hot';
+            document.querySelectorAll('.comment-sort-btn').forEach(b => {
+                if (b.dataset.listType === currentCommentListType) {
+                    b.classList.add('text-coolapk', 'font-medium');
+                } else {
+                    b.classList.remove('text-coolapk', 'font-medium');
+                }
+            });
+            loadCommentList(currentDetailId, false);
+        }
+        const searchTypeBtn = e.target.closest('.search-type-btn');
+        if (searchTypeBtn && currentSearchKeyword) {
+            currentSearchType = searchTypeBtn.dataset.type || 'all';
+            document.querySelectorAll('.search-type-btn').forEach(b => {
+                if (b.dataset.type === currentSearchType) {
+                    b.classList.add('text-coolapk', 'border-b-2', 'border-coolapk');
+                    b.classList.remove('text-gray-500');
+                } else {
+                    b.classList.remove('text-coolapk', 'border-b-2', 'border-coolapk');
+                    b.classList.add('text-gray-500');
+                }
+            });
+            executeSearch(currentSearchKeyword, false);
+        }
+    });
+
+    // --- 新增：手势下拉刷新逻辑 ---
+    mainContent.addEventListener('touchstart', (e) => {
+        if (mainContent.scrollTop <= 0 && currentView === 'view-feed') {
+            startY = e.touches[0].clientY;
+            isPulling = true;
+            ptrIndicator.style.transition = 'none';
+        }
+    }, { passive: true });
+
+    mainContent.addEventListener('touchmove', (e) => {
+        if (!isPulling || currentView !== 'view-feed') return;
+        const y = e.touches[0].clientY;
+        ptrDistance = y - startY;
+
+        if (ptrDistance > 0 && mainContent.scrollTop <= 0) {
+            const dampening = 0.4;
+            const visualDistance = Math.min(ptrDistance * dampening, 120);
+            
+            ptrIndicator.style.height = `${visualDistance}px`;
+            
+            if (visualDistance > 60) {
+                ptrText.textContent = "释放立即刷新";
+                ptrIcon.style.transform = "rotate(180deg)";
+            } else {
+                ptrText.textContent = "下拉刷新";
+                ptrIcon.style.transform = "rotate(0deg)";
+            }
+            if (e.cancelable) e.preventDefault(); // 阻止浏览器原生橡皮筋
+        }
+    }, { passive: false });
+
+    mainContent.addEventListener('touchend', async () => {
+        if (!isPulling || currentView !== 'view-feed') return;
+        isPulling = false;
+        
+        const dampening = 0.4;
+        const visualDistance = Math.min(ptrDistance * dampening, 120);
+        ptrIndicator.style.transition = 'height 0.3s ease';
+
+        if (visualDistance > 60) {
+            ptrIndicator.style.height = '50px';
+            ptrText.textContent = "正在刷新...";
+            ptrIcon.className = "fas fa-circle-notch fa-spin text-coolapk";
+            ptrIcon.style.transform = "rotate(0deg)";
+            
+            await fetchRealFeedData(true);
+            
+            ptrText.textContent = "刷新成功";
+            ptrIcon.className = "fas fa-check-circle text-coolapk";
+            
+            setTimeout(() => {
+                ptrIndicator.style.height = '0px';
+                setTimeout(() => {
+                    ptrIcon.className = "fas fa-arrow-down transition-transform duration-300";
+                    ptrText.textContent = "下拉刷新";
+                }, 300);
+            }, 500);
+        } else {
+            ptrIndicator.style.height = '0px';
+        }
+        ptrDistance = 0;
+    });
+
+    // --- 新增：上滑加载更多监听（主信息流/搜索结果） ---
+    mainContent.addEventListener('scroll', () => {
+        // 搜索结果分页
+        if (currentView === 'view-search-results' && !isSearchLoading && searchHasMore) {
+            const sp = mainContent.scrollTop + mainContent.clientHeight;
+            if (sp >= mainContent.scrollHeight - 120) {
+                executeSearch(currentSearchKeyword, true);
+            }
+            return;
+        }
+        // 信息流分页
+        if (currentView !== 'view-feed' || isLoading || !hasMore) return;
+        const scrollPosition = mainContent.scrollTop + mainContent.clientHeight;
+        if (scrollPosition >= mainContent.scrollHeight - 100) {
+            fetchRealFeedData(false);
+        }
+    });
+
+    // --- 详情页内部滚动区：评论加载更多 ---
+    const detailMain = document.querySelector('#view-detail > main');
+    if (detailMain) {
+        detailMain.addEventListener('scroll', () => {
+            if (document.getElementById('view-detail').classList.contains('hidden')) return;
+            const sp = detailMain.scrollTop + detailMain.clientHeight;
+            if (sp >= detailMain.scrollHeight - 120 && !isCommentLoading && commentHasMore && currentDetailId) {
+                loadCommentList(currentDetailId, true);
+            }
+        });
+    }
+
+    // 渲染静态应用列表 (Mock)
+    function renderAppsMock() {
+        const mockAppsData = [
+            { name: '酷安', desc: '发现科技新生活', size: '45MB', rating: '9.8', icon: 'https://placehold.co/100x100/11B063/ffffff?text=C' },
+            { name: 'Via浏览器', desc: '极简轻量级浏览器', size: '2MB', rating: '9.5', icon: 'https://placehold.co/100x100/333333/ffffff?text=V' }
+        ];
+        
+        appsContainer.innerHTML = '';
+        mockAppsData.forEach((app, index) => {
+            const appHtml = `
+                <div class="flex items-center justify-between py-3 ${index !== mockAppsData.length - 1 ? 'border-b border-gray-50' : ''}">
+                    <div class="flex items-center space-x-3">
+                        <div class="text-gray-300 font-bold w-4 text-center text-sm">${index + 1}</div>
+                        <img src="${getProxiedImageUrl(app.icon)}" class="w-12 h-12 rounded-xl shadow-sm border border-gray-100">
+                        <div>
+                            <div class="font-bold text-sm text-gray-800">${app.name}</div>
+                            <div class="text-[11px] text-gray-400 mt-0.5">${app.size} | 评分 ${app.rating}</div>
+                            <div class="text-[11px] text-gray-500 mt-0.5 w-40 truncate">${app.desc}</div>
+                        </div>
+                    </div>
+                    <button class="bg-coolapk-light hover:bg-coolapk hover:text-white text-coolapk font-bold text-xs px-4 py-1.5 rounded-full transition duration-300">
+                        下载
+                    </button>
+                </div>
+            `;
+            appsContainer.insertAdjacentHTML('beforeend', appHtml);
+        });
+    }
+
+    const navButtons = document.querySelectorAll('.nav-btn');
+    const views = ['view-feed', 'view-apps', 'view-profile'];
+
+    // 底部导航栏切换逻辑
+    navButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const targetViewId = e.currentTarget.getAttribute('data-view');
+            currentView = targetViewId; // 更新视图状态阻止在别处触发下拉刷新
+            
+            navButtons.forEach(b => {
+                b.classList.remove('text-coolapk');
+                b.classList.add('text-gray-400');
+            });
+            e.currentTarget.classList.remove('text-gray-400');
+            e.currentTarget.classList.add('text-coolapk');
+
+            if(targetViewId === 'view-feed') {
+                topTabs.classList.remove('hidden');
+                topTabs.classList.add('flex');
+            } else {
+                topTabs.classList.add('hidden');
+                topTabs.classList.remove('flex');
+            }
+
+            views.forEach(viewId => document.getElementById(viewId).classList.add('hidden'));
+            document.getElementById(targetViewId).classList.remove('hidden');
+        });
+    });
+
+    // 页面加载完毕后初始化：拉取 main/init 配置 → 渲染所有顶部 Tab → 拉信息流
+    window.onload = () => {
+        renderAppsMock();
+        bootMain();
+    };
+
+</script>
+</body>
+</html>
