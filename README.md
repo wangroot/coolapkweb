@@ -4,7 +4,29 @@
 
 ## 快速开始
 
-### 1. 初始化 Node.js 项目
+### 1. 安装 Node.js
+
+根据您的操作系统，选择以下方式之一安装 Node.js（推荐使用 LTS 版本，且版本建议 >= 16.0.0）：
+
+*   **Windows & macOS**: 前往 [Node.js 官方网站](https://nodejs.org/) 下载并运行安装包。
+*   **Linux (Ubuntu/Debian)**:
+    ```bash
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    ```
+*   **macOS (Homebrew)**:
+    ```bash
+    brew install node
+    ```
+
+安装完成后，可在终端运行以下命令验证是否安装成功：
+
+```bash
+node -v
+npm -v
+```
+
+### 2. 初始化 Node.js 项目
 
 运行以下命令快速生成默认的 `package.json`：
 
@@ -12,19 +34,19 @@
 npm init -y
 ```
 
-### 2. 安装依赖包
+### 3. 安装依赖包
 
 ```bash
 npm install express cors axios
 ```
 
-### 3. 运行后端服务
+### 4. 运行后端服务
 
 ```bash
 node server.js
 ```
 
-### 4. 访问前端页面
+### 5. 访问前端页面
 
 在浏览器中打开：
 [http://localhost:3000/index.html](http://localhost:3000/index.html)
