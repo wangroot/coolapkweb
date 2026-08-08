@@ -53,3 +53,7 @@ http://localhost:3000/index.html
     4. 搜索接口 (Search)
     综合搜索：
     GET /v6/search?type=all&searchValue={keywords}&page={page}
+
+    # 项目参考
+    https://github.com/Coolapk-UWP/Coolapk-Lite/tree/master
+    
